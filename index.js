@@ -947,15 +947,20 @@ module.exports = function (app) {
         trueWindIn.copyFrom(calculatedWind);
         trueWind.copyFrom(calculatedWind);
         trueWind.substract(boatSpeed);
+        // Bring true wind back into the bow frame
+        if (options.correctForLeeway && leewayHandler && leewayHandler.ready) {
+            trueWind.rotate(+leewayHandler.value);
+        }
       }
       else trueWind.invalidate();
+
+      //Restore the pre-leeway so it's not included in backfilled AW or GroundWind
+      calculatedWind.copyFrom(leewayIn);
 
         // --- Height / wind gradient ---
         heightIn.copyFrom(trueWind);
       if (options.correctForHeight && trueWind.ready) {
         trueWind.scale(approximateWindGradient());
-        calculatedWind.copyFrom(trueWind);
-        calculatedWind.add(boatSpeed);
       }
       heightOut.copyFrom(trueWind);  // always the height-corrected true wind (= heightIn if disabled)
 
