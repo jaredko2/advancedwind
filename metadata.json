@@ -1,0 +1,6 @@
+{
+  "name": "Advanced Wind",
+  "description": "Calculates true wind, ground wind and wind shifts while correcting for sensor misalignment, rotating mast, vessel motion, upwash, leeway and mast height.",
+  "permissions": [],
+  "capabilities": []
+}

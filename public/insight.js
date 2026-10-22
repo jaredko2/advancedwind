@@ -112,10 +112,10 @@ function _computeDerivedPolars(cfg, st) {
   const roll  = attObj && attObj.value ? (attObj.value.roll  || 0) : 0;
   const pitch = attObj && attObj.value ? (attObj.value.pitch || 0) : 0;
 
-  // heelVector: mast-tip displacement in SVG units — x=fore-aft (pitch), y=lateral (roll).
+  // heelVector: mast-tip displacement in SVG units — x=fore-aft (pitch aft is -x), y=lateral (roll).
   // svgUnits:true means it bypasses wind scale and is drawn at scale=1.
   st.polarsById["heelVector"] = {
-    id: "heelVector", x: Math.sin(pitch) * 112.5, y: Math.sin(roll) * 112.5,
+    id: "heelVector", x: -Math.sin(pitch) * 112.5, y: Math.sin(roll) * 112.5,
     solid: true, plane: "Boat", svgUnits: true
   };
 

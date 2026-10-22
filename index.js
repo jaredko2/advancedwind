@@ -467,14 +467,12 @@ module.exports = function (app) {
     const headingLifecycle = buildLifecycleCallbacks(
       'heading.smoothed',
       () => heading?.handler?.path || 'navigation.headingTrue',
-      () => { heading?.unsubscribe(); heading?.subscribe(); }
+      () => { heading?.unsubscribe(); heading?.subscribe(false, true); }
     );
-    heading = createSmoothedHandler({
-      id: "heading",
-      path: "navigation.headingTrue",
+    heading = new SmoothedAngle(app, plugin.id, "heading", "navigation.headingTrue", {
       subscribe: true,
-      app,
-      pluginId: plugin.id,
+      angleRange: '0to2pi',
+      meta: { displayName: "Heading", plane: "Ground", units: "rad", displayUnits: { category: "angle" } },
       SmootherClass,
       smootherOptions,
       onDelta: headingLifecycle.onDelta,
@@ -557,7 +555,7 @@ module.exports = function (app) {
         attLastTime = now;
         const r = options.heightAboveWater;
         sensorSpeed.setVectorValue({
-          x: ((current.pitch - attPrevious.pitch) / deltaT) * r,
+          x: -((current.pitch - attPrevious.pitch) / deltaT) * r,
           y: ((current.roll - attPrevious.roll) / deltaT) * r
         });
         attPrevious.roll = current.roll;
@@ -758,6 +756,7 @@ module.exports = function (app) {
       onDelta: () => {
         clearLifecycleWarning('windShiftFast');
         if (!options.detectWindShift) return;
+        if (!windShiftFast.ready || !windShiftSlow.ready) return;
         const fast = windShiftFast.value;
         const slow = windShiftSlow.value;
         if (typeof fast !== 'number' || typeof slow !== 'number') return;
@@ -827,7 +826,7 @@ module.exports = function (app) {
 
     windShift = new MessageHandler(app, plugin.id, 'windShift');
     windShift.configure('environment.wind.directionTrue.trend.shift');
-    MessageHandler.setMeta(app, plugin.in, 'environment.wind.directionTrue.trend.shift', { displayName: 'Wind Shift', description: 'Wind shift: angle difference between fast and slow mean wind directions', plane: 'Ground', units: 'rad', displayUnits: { category: 'angle' } });
+    MessageHandler.setMeta(app, plugin.id, 'environment.wind.directionTrue.trend.shift', { displayName: 'Wind Shift', description: 'Wind shift: angle difference between fast and slow mean wind directions', plane: 'Ground', units: 'rad', displayUnits: { category: 'angle' } });
 
     if (options.detectWindShift) sendWindShiftMeta();
 
@@ -907,8 +906,14 @@ module.exports = function (app) {
         const pitchOk = Number.isFinite(attitude.value.pitch);
         const rollOk = Number.isFinite(attitude.value.roll);
         // Missing pitch/roll — leave that axis untouched rather than guessing.
-        if (pitchOk) calculatedWind.xValue = calculatedWind.x / Math.cos(attitude.value.pitch);
-        if (rollOk) calculatedWind.yValue = calculatedWind.y / Math.cos(attitude.value.roll);
+        if (pitchOk) {
+          const cosPitch = Math.cos(attitude.value.pitch);
+          if (Math.abs(cosPitch) > 0.05) calculatedWind.xValue = calculatedWind.x / cosPitch;
+        }
+        if (rollOk) {
+          const cosRoll = Math.cos(attitude.value.roll);
+          if (Math.abs(cosRoll) > 0.05) calculatedWind.yValue = calculatedWind.y / cosRoll;
+        }
         if (pitchOk) clearLifecycleWarning('attitude.smoothed.pitch');
         else setLifecycleWarning('attitude.smoothed.pitch', 'incomplete', 'navigation.attitude.pitch');
         if (rollOk) clearLifecycleWarning('attitude.smoothed.roll');
@@ -1001,20 +1006,25 @@ module.exports = function (app) {
     }
 
     function approximateUpwash(angle) {
+      if (!Number.isFinite(angle) || angle === 0) return 0;
       if (isNaN(options.upwashSlope) || isNaN(options.upwashOffset)) return 0;
-      return (options.upwashSlope * angle + options.upwashOffset * Math.PI / 180) * Math.max(0, Math.cos(angle));
+      const sign = Math.sign(angle);
+      const absAngle = Math.abs(angle);
+      return sign * (options.upwashSlope * absAngle + options.upwashOffset * Math.PI / 180) * Math.max(0, Math.cos(absAngle));
     }
 
     function approximateWindGradient() {
       let h = options.heightAboveWater;
+      if (!Number.isFinite(h) || h <= 0) return 1;
       if (attitude.ready) {
         // Missing roll/pitch — treat that factor as neutral (cos 0 = 1) rather than guessing.
         const rollFactor = Number.isFinite(attitude.value.roll) ? Math.cos(attitude.value.roll) : 1;
         const pitchFactor = Number.isFinite(attitude.value.pitch) ? Math.cos(attitude.value.pitch) : 1;
         const hEff = h * rollFactor * pitchFactor;
-        if (hEff > 0) h = hEff;
+        if (hEff > 0.1) h = hEff;
       }
-      return Math.pow(10 / h, options.windExponent);
+      const exponent = isNaN(options.windExponent) ? 0.14 : options.windExponent;
+      return Math.pow(10 / Math.max(0.5, h), exponent);
     }
 
     applyOptionChanges = function () {

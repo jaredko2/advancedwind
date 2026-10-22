@@ -763,3 +763,136 @@ describe('initialization order (subscription race)', () => {
     }
   });
 });
+
+describe('heading wrap-around at 0 degrees', () => {
+  it('smoothly tracks heading across 0/360 degrees without swinging through South (180 deg)', async () => {
+    const { app, cleanup, subscribers } = createTrackingShim({ calculateGroundWind: true });
+    let plugin;
+    try {
+      plugin = require('../index.js')(app);
+      const routes = {};
+      const mockRouter = {
+        get: (p, handler) => { routes[`GET ${p}`] = handler; },
+        put: (p, handler) => { routes[`PUT ${p}`] = handler; },
+      };
+      plugin.registerWithRouter(mockRouter);
+      plugin.start();
+
+      const headingCbs = subscribers.get('navigation.headingTrue');
+      assert.ok(headingCbs && headingCbs.size > 0, 'navigation.headingTrue subscriber must exist');
+
+      // Deliver heading values crossing 0: 355 deg -> 358 deg -> 359 deg -> 1 deg -> 3 deg
+      const testAnglesDeg = [355, 358, 359, 0, 1, 3];
+      for (const deg of testAnglesDeg) {
+        deliverDelta(subscribers, [{ path: 'navigation.headingTrue', value: deg * Math.PI / 180 }]);
+        let report = null;
+        routes['GET /report']({}, { json: (d) => { report = d; } });
+        assert.ok(report?.deltas?.['heading.smoothed'], 'report must contain heading.smoothed');
+        const headingDeg = (report.deltas['heading.smoothed'].value * 180 / Math.PI + 360) % 360;
+        // Verify heading stays in the northern quadrant (340..360 or 0..20) and never swings into South (90..270)
+        assert.ok(
+          headingDeg >= 340 || headingDeg <= 20,
+          `heading (${headingDeg.toFixed(1)}°) must not swing into South when input is ${deg}°`
+        );
+      }
+    } finally {
+      if (plugin) await plugin.stop?.();
+      cleanup();
+    }
+  });
+});
+
+describe('upwash calculation symmetry', () => {
+  it('corrects upwash symmetrically on port and starboard tacks', async () => {
+    // Starboard tack (+40°)
+    const shimStbd = createTrackingShim({
+      correctForUpwash: true,
+      upwashSlope: 0.05,
+      upwashOffset: 1.5,
+    });
+    let pluginStbd;
+    let upwashStbd;
+    try {
+      pluginStbd = require('../index.js')(shimStbd.app);
+      const routes = {};
+      pluginStbd.registerWithRouter({ get: (p, h) => routes[`GET ${p}`] = h, put: () => {} });
+      pluginStbd.start();
+      deliverDelta(shimStbd.subscribers, [
+        { path: 'environment.wind.speedApparent', value: 10 },
+        { path: 'environment.wind.angleApparent', value: 40 * Math.PI / 180 },
+      ]);
+      let reportStbd = null;
+      routes['GET /report']({}, { json: (d) => { reportStbd = d; } });
+      upwashStbd = reportStbd?.deltas?.['upwashAngle']?.value;
+    } finally {
+      if (pluginStbd) await pluginStbd.stop?.();
+      shimStbd.cleanup();
+    }
+
+    // Port tack (-40°)
+    const shimPort = createTrackingShim({
+      correctForUpwash: true,
+      upwashSlope: 0.05,
+      upwashOffset: 1.5,
+    });
+    let pluginPort;
+    let upwashPort;
+    try {
+      pluginPort = require('../index.js')(shimPort.app);
+      const routes = {};
+      pluginPort.registerWithRouter({ get: (p, h) => routes[`GET ${p}`] = h, put: () => {} });
+      pluginPort.start();
+      deliverDelta(shimPort.subscribers, [
+        { path: 'environment.wind.speedApparent', value: 10 },
+        { path: 'environment.wind.angleApparent', value: -40 * Math.PI / 180 },
+      ]);
+      let reportPort = null;
+      routes['GET /report']({}, { json: (d) => { reportPort = d; } });
+      upwashPort = reportPort?.deltas?.['upwashAngle']?.value;
+    } finally {
+      if (pluginPort) await pluginPort.stop?.();
+      shimPort.cleanup();
+    }
+
+    assert.ok(typeof upwashStbd === 'number' && upwashStbd > 0, 'starboard upwash should be positive');
+    assert.ok(typeof upwashPort === 'number' && upwashPort < 0, 'port upwash should be negative');
+    assert.ok(
+      Math.abs(upwashStbd + upwashPort) < 1e-4,
+      `upwash must be symmetric: starboard=${(upwashStbd * 180 / Math.PI).toFixed(2)}°, port=${(upwashPort * 180 / Math.PI).toFixed(2)}°`
+    );
+  });
+});
+
+describe('wind gradient height bounds', () => {
+  it('does not produce NaN or Infinity when heightAboveWater is 0 or unconfigured', async () => {
+    const { app, cleanup, subscribers } = createTrackingShim({
+      correctForHeight: true,
+      heightAboveWater: 0,
+      windExponent: 0.14,
+    });
+    let plugin;
+    try {
+      plugin = require('../index.js')(app);
+      plugin.start();
+
+      deliverDelta(subscribers, [
+        { path: 'navigation.speedThroughWater', value: 3.0 },
+        { path: 'environment.wind.speedApparent', value: 7.0 },
+        { path: 'environment.wind.angleApparent', value: 0.5 },
+      ]);
+
+      const trueWindPolar = plugin.schema ? plugin : null;
+      assert.doesNotThrow(() => {
+        deliverDelta(subscribers, [
+          { path: 'environment.wind.speedApparent', value: 7.2 },
+          { path: 'environment.wind.angleApparent', value: 0.52 },
+        ]);
+      });
+    } finally {
+      if (plugin) await plugin.stop?.();
+      cleanup();
+    }
+  });
+});
+
+

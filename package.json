@@ -20,6 +20,10 @@
     "docs"
   ],
   "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node -e \"console.log('Build ready')\"",
+    "lint": "node --check index.js server.js public/insight.js",
     "test": "node --test test/plugin.test.js"
   },
   "engines": {
@@ -58,6 +62,8 @@
     ]
   },
   "dependencies": {
+    "@coreui/coreui": "2.1.16",
+    "express": "^5.3.0",
     "signalkutilities": "^3.1.5"
   }
 }
